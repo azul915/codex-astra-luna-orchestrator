@@ -1,6 +1,6 @@
 ---
 name: astra-orchestrator
-description: Orchestrate complex Codex coding work for the Pro profile with GPT-6 Astra at medium reasoning as planner/integrator, Luna subagents for exploration, implementation, testing, and research, and an Astra reviewer. Use for multi-file features, debugging across components, repo-wide changes, parallelizable workstreams, or whenever the user asks to delegate or use subagents. Do not use for trivial one-file edits or simple questions.
+description: Orchestrate complex Codex coding work for the Pro profile with GPT-6 Astra at medium reasoning as planner/integrator, optional Luna, Composer 2.5, or Grok 4.7 workers for exploration, implementation, testing, and research, and an Astra reviewer. Use for multi-file features, debugging across components, repo-wide changes, parallelizable workstreams, or whenever the user asks to delegate or use subagents. Do not use for trivial one-file edits or simple questions.
 ---
 
 # Astra Orchestrator — Pro Profile
@@ -22,13 +22,22 @@ The expected default topology is:
 - reviewer: GPT-6 Astra at low reasoning
 - researcher: GPT-6 Luna at max reasoning
 
-Use Luna for all routine subagent execution.
+---
 
-This is a requirement, not a preference.
+## Worker model routing
 
-The root and reviewer use Astra; routine execution subagents use Luna.
+The root and reviewer use the profile models. For explorer, worker, tester, and researcher, the orchestrator selects the backend before delegating. An explicit user selection takes precedence over the project configuration. Use native Luna when the user selects it or no project configuration exists. For a project configuration or a per-task Cursor selection, resolve the route with the installed runner:
 
-Do not override a Luna subagent to a more expensive model unless the user explicitly asks for escalation or a Luna worker reports that the task requires higher-level reasoning.
+```sh
+node .agents/skills/astra-orchestrator/scripts/cursor-worker/run.mjs --resolve --workspace "<absolute workspace>"
+```
+
+Run from the project root, or use the absolute path to the installed runner. The project configuration is `.agents/skills/astra-orchestrator/worker-model.json`. Supported models are `gpt-6-luna` (the default), `composer-2.5` with optional `fast`, and `grok-4.7` with optional `fast`, `context` (`256k` or `500k`), and `effort` (`low`, `medium`, `high`, or `xhigh`). For a per-task selection, pass `--model` and any explicitly requested `--fast true|false`, `--context`, and `--effort` flags on both invocations.
+
+- For `backend: codex`, call `spawn_agent` with the profile's role and model. The native path also applies when the user or project explicitly selects Luna. Native delegation requires no Cursor runner or SDK.
+- For `backend: cursor`, write the bounded delegation contract to a temporary UTF-8 file and invoke the same runner with `--role <role> --prompt-file "<absolute prompt file>"` in place of `--resolve`. Pass `--workspace` explicitly. Use the shell tool and track the process until it exits. Clean up the prompt file when finished.
+- Include both kinds of delegation in the profile concurrency limit. Keep write scope explicit for Cursor workers and testers. Use the native reviewer role for independent review.
+- If resolution or execution fails, report the selected backend and the error. Preserve the requested model unless the user authorizes a change.
 
 ---
 
@@ -53,17 +62,17 @@ The task MUST be delegated when at least one of the following is true:
 - an independent post-change review is materially useful
 - the user explicitly asks for delegation, parallelism, agents, or subagents
 
-When a task qualifies for delegation, the root MUST call `spawn_agent` before performing the delegated work itself.
+When a task qualifies for delegation, the root must launch the selected backend before performing the delegated work itself.
 
 Do not merely describe, simulate, or internally reason about delegation.
 
-Actual subagents must be spawned.
+Delegation requires a native subagent or a running Cursor worker.
 
-If `spawn_agent` is unavailable or fails, explicitly report that failure.
+If the selected backend is unavailable or fails, explicitly report that failure.
 
-Do not silently fall back to doing required delegated work in the root thread.
+Disclose when delegated work must move back to the root thread.
 
-For every delegated task, spawn at least one subagent.
+For every delegated task, launch at least one agent through the selected backend.
 
 Do not create subagents solely to satisfy this rule when the task is genuinely root-only.
 
@@ -77,7 +86,7 @@ The root agent owns:
 2. choosing the architecture and implementation direction
 3. decomposing the task
 4. deciding which tasks can run in parallel
-5. spawning the appropriate subagents
+5. launching the appropriate agents
 6. giving each subagent a bounded contract
 7. resolving conflicting subagent findings
 8. integrating changes
@@ -95,7 +104,7 @@ The root must not offload architectural ownership to a subagent.
 
 ## Spawn policy
 
-When spawning agents, use these models by default:
+When spawning native agents, use these models by default:
 
 - explorer: `gpt-6-luna` at `max` reasoning
 - worker: `gpt-6-luna` at `max` reasoning
@@ -105,7 +114,7 @@ When spawning agents, use these models by default:
 
 The root keeps the Pro profile configuration from `.codex/config.toml`: GPT-6 Astra at medium reasoning. The role files in `.codex/agents/` explicitly set Luna reasoning to `max` and reviewer reasoning to `low`. Preserve those efforts when spawning agents unless the user requests a change. Do not change the root model from within a session.
 
-For every delegated task:
+For every native delegated task:
 
 1. call `spawn_agent`
 2. give the agent a descriptive task name using underscores
@@ -114,15 +123,13 @@ For every delegated task:
 5. retain the returned task name or identifier
 6. wait for required agents before final synthesis
 
-Do not silently substitute the root agent for a required Luna worker.
+Do not silently substitute the root agent for a delegated worker.
 
 Do not spawn Astra workers except for the `reviewer` role unless:
 
 - the user explicitly requests Astra
-- Luna reports a genuinely difficult reasoning blocker
+- the selected worker reports a genuinely difficult reasoning blocker
 - the root determines that a high-risk architectural or security review needs Astra
-
-Routine execution should remain on Luna.
 
 ---
 
@@ -204,7 +211,7 @@ Use `researcher` for:
 
 Run independent tasks in parallel.
 
-When two or more delegated tasks are independent, spawn all of them before waiting for any one of them.
+When two or more delegated tasks are independent, launch all of them before waiting for any one of them.
 
 Good parallel set:
 
@@ -251,23 +258,23 @@ Prefer one writer per file or subsystem.
 
 For non-trivial implementation tasks, prefer this sequence:
 
-1. spawn one or more Luna explorers if repository understanding is needed
+1. launch one or more explorers if repository understanding is needed
 2. wait for exploration results
 3. root decides implementation direction
-4. spawn Luna worker or workers with bounded ownership
+4. launch one or more workers with bounded ownership
 5. wait for implementation
-6. spawn Luna tester
+6. launch a tester
 7. wait for validation
 8. spawn Astra reviewer when an independent review is materially useful
 9. resolve material findings
 10. run final verification
 11. present the result
 
-Do not spawn every role mechanically.
+Launch only the roles the work requires.
 
 Use only the roles that materially improve the task.
 
-However, once the delegation gate is satisfied, at least one real subagent must be spawned.
+However, once the delegation gate is satisfied, at least one agent must be launched.
 
 ---
 
@@ -279,8 +286,8 @@ For cross-component bugs:
 2. reproduce the issue when possible
 3. collect evidence before selecting a fix
 4. root determines the likely root cause
-5. assign a bounded Luna worker to implement the fix
-6. assign Luna tester to reproduce the original failure and validate the fix
+5. assign a bounded worker to implement the fix
+6. assign a tester to reproduce the original failure and validate the fix
 7. use Astra reviewer for high-risk or non-obvious fixes
 
 Do not let multiple workers independently attempt competing fixes unless the root intentionally requests alternative approaches.
@@ -291,7 +298,7 @@ Do not let multiple workers independently attempt competing fixes unless the roo
 
 When current or version-specific external information matters:
 
-1. spawn a Luna researcher
+1. launch a researcher
 2. require primary or authoritative sources when possible
 3. return concise findings and compatibility implications
 4. let the root decide how those findings affect implementation
@@ -302,7 +309,7 @@ Do not mix speculative external claims into implementation decisions without ver
 
 ## Cost and context discipline
 
-Use Luna for routine subagent execution.
+Use the selected backend for routine subagent execution.
 
 Keep the root context focused on:
 
@@ -343,7 +350,7 @@ A subagent should report back instead of expanding scope when it encounters:
 
 The root decides what to do next.
 
-Luna should not independently escalate itself to a more expensive model.
+A delegated agent should report when a task needs a different model.
 
 The root owns model escalation decisions.
 
@@ -358,7 +365,7 @@ If a subagent fails:
 3. do not silently ignore the failed delegation
 4. do not claim the delegated work completed successfully
 
-If `spawn_agent` itself fails, explicitly note the failure.
+If the selected backend fails to launch, explicitly note the failure.
 
 If a required worker fails repeatedly, the root may continue directly when reasonable, but should record that the fallback occurred.
 
@@ -368,7 +375,7 @@ If a required worker fails repeatedly, the root may continue directly when reaso
 
 Before producing the final answer for a delegated task, confirm that:
 
-- every required subagent was actually spawned
+- every required agent was launched
 - every required subagent either completed or explicitly failed
 - material findings were integrated
 - conflicting findings were resolved
@@ -377,7 +384,7 @@ Before producing the final answer for a delegated task, confirm that:
 
 Do not finish while required subagents are still running.
 
-Do not claim delegation occurred unless `spawn_agent` was actually called successfully.
+Report the backend actually used for delegated work.
 
 ---
 

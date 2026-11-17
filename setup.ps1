@@ -15,7 +15,7 @@ $banner = @'
 |                                       |
 |        O R C H E S T R A T O R        |
 |    Orchestrate with Astra or Sol.     |
-|          Execute with Luna.           |
+|    Execute with Luna or Cursor.       |
 +---------------------------------------+
 '@
 
@@ -339,7 +339,21 @@ try {
                 Install-Component -Name $component -TargetDirectory $targetDirectory -SourcePath (Join-Path $profileDirectory "codex")
             }
             elseif ($component -eq '.agents') {
-                Install-Component -Name $component -TargetDirectory $targetDirectory -SourcePath (Join-Path $profileDirectory "agents")
+                $agentsStage = Join-Path ([IO.Path]::GetTempPath()) ("astra-orchestrator-" + [Guid]::NewGuid().ToString('N'))
+                $null = New-Item -ItemType Directory -Path $agentsStage
+                try {
+                    Copy-DirectoryContents -Source (Join-Path $profileDirectory 'agents') -Destination $agentsStage
+                    $runnerDestination = Join-Path $agentsStage 'skills/astra-orchestrator/scripts/cursor-worker'
+                    $null = New-Item -ItemType Directory -Path $runnerDestination -Force
+                    foreach ($runnerFile in 'run.mjs', 'package.json', 'package-lock.json') {
+                        $runnerSource = Join-Path $scriptDir "scripts/cursor-worker/$runnerFile"
+                        Copy-Item -LiteralPath $runnerSource -Destination $runnerDestination
+                    }
+                    Install-Component -Name $component -TargetDirectory $targetDirectory -SourcePath $agentsStage
+                }
+                finally {
+                    Remove-Item -LiteralPath $agentsStage -Recurse -Force
+                }
             }
             else {
                 Install-Component -Name $component -TargetDirectory $targetDirectory

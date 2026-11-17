@@ -1,0 +1,6 @@
+{
+  "name": "astra-orchestrator-cursor-worker",
+  "private": true,
+  "engines": { "node": ">=22.13" },
+  "dependencies": { "@cursor/sdk": "1.4.0" }
+}

@@ -1,14 +1,14 @@
-# Codex Sol/Astra Orchestrator + Luna Subagents
+# Codex Orchestrator with Luna, Composer and Grok
 
 Install a Codex profile with GPT-6 Astra, GPT-6.1 Sol, or GPT-6 Luna as the orchestrator,
-GPT-6 Luna execution subagents, and an independent reviewer.
+an independent reviewer, and your choice of GPT-6 Luna, Composer 2.5, or Grok 4.7 for execution.
 
 The Sol profiles use `gpt-6.1-sol` for both the orchestrator and reviewer.
 
 ## Orchestration topology
 
 The diagram shows the Astra (Pro) and Sol orchestrators. Plus uses a Luna
-root, as shown in the profile table below. Execution roles use GPT-6 Luna;
+root, as shown in the profile table below. Execution roles default to GPT-6 Luna;
 the reviewer uses Astra for Pro/Plus and Sol for Sol profiles.
 
 ```text
@@ -38,7 +38,7 @@ the reviewer uses Astra for Pro/Plus and Sol for Sol profiles.
 1. Clone this repository and enter it:
 
    ```sh
-   git clone https://github.com/donvito/codex-astra-luna-orchestrator.git
+   git clone https://github.com/azul915/codex-astra-luna-orchestrator.git
    cd codex-astra-luna-orchestrator
    ```
 
@@ -122,6 +122,43 @@ a worker to implement it, and the tester and reviewer to verify it.
 
 The skill keeps the `astra-orchestrator` name in every profile so the shared
 `AGENTS.md` works; the Sol profiles use Sol according to their configuration.
+
+## Choose a worker model
+
+The orchestrator routes explorer, worker, tester, and researcher tasks to the selected model. It uses the profile's native Codex roles for GPT-6 Luna and runs Composer and Grok through the Cursor SDK in the local project workspace. Each profile defines the root and reviewer models.
+
+Install the `.agents` component with either setup script. For Composer and Grok, use Node.js 22.13 or later, set `CURSOR_API_KEY`, and install the bundled runner's dependencies from your project root:
+
+```sh
+npm ci --prefix .agents/skills/astra-orchestrator/scripts/cursor-worker
+```
+
+Save this example to `.agents/skills/astra-orchestrator/worker-model.json`:
+
+```json
+{
+  "model": "grok-4.7",
+  "fast": true,
+  "context": "500k",
+  "effort": "high"
+}
+```
+
+| Model | Configuration |
+| --- | --- |
+| `gpt-6-luna` | Default when the configuration file is absent |
+| `composer-2.5` | Optional `fast` boolean |
+| `grok-4.7` | Optional `fast` boolean, `context` (`256k` or `500k`), and `effort` (`low`, `medium`, `high`, or `xhigh`) |
+
+Omitted Cursor options use your Cursor defaults. Available variants depend on your account. [Cursor SDK model parameters](https://cursor.com/docs/sdk/typescript#model-parameters) · [Grok 4.7 options](https://cursor.com/docs/models/grok-4-7)
+
+You can override the selection for one task in your Codex prompt, for example `$astra-orchestrator: use Composer 2.5 with Fast off to investigate the failing tests`. To inspect the resolved route without making a model request, run:
+
+```sh
+node .agents/skills/astra-orchestrator/scripts/cursor-worker/run.mjs --resolve
+```
+
+For manual project installs, copy `scripts/cursor-worker/` into the installed skill's `scripts/` directory before running `npm ci`.
 
 ## Profiles
 

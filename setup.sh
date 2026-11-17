@@ -14,7 +14,7 @@ cat <<'BANNER'
 |                                       |
 |        O R C H E S T R A T O R        |
 |    Orchestrate with Astra or Sol.     |
-|          Execute with Luna.           |
+|    Execute with Luna or Cursor.       |
 +---------------------------------------+
 BANNER
 printf '%s\n' 'Interactive project setup'
@@ -60,7 +60,7 @@ confirm() {
 overwrite_paths() {
     source_path=$1
     destination_path=$2
-    component_name=$(basename "$source_path")
+    component_name=$(basename "$destination_path")
 
     if [ -f "$source_path" ]; then
         if [ -e "$destination_path" ] || [ -L "$destination_path" ]; then
@@ -222,6 +222,18 @@ copy_component() {
     component_installed=yes
 }
 
+stage_agents() {
+    agents_stage=$(mktemp -d)
+    trap 'rm -rf "$agents_stage"' 0
+    trap 'exit 1' HUP INT TERM
+    cp -R "$script_dir/profiles/$plan/agents/." "$agents_stage/"
+    runner_destination=$agents_stage/skills/astra-orchestrator/scripts/cursor-worker
+    mkdir -p "$runner_destination"
+    for runner_file in run.mjs package.json package-lock.json; do
+        cp "$script_dir/scripts/cursor-worker/$runner_file" "$runner_destination/"
+    done
+}
+
 plan=pro
 select_plan
 
@@ -231,7 +243,8 @@ for component in .codex .agents AGENTS.md; do
         if [ "$component" = .codex ]; then
             copy_component "$component" "$script_dir/profiles/$plan/codex"
         elif [ "$component" = .agents ]; then
-            copy_component "$component" "$script_dir/profiles/$plan/agents"
+            stage_agents
+            copy_component "$component" "$agents_stage"
         else
             copy_component "$component"
         fi
