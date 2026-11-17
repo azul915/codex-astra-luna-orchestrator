@@ -8,7 +8,7 @@ The Sol profiles use `gpt-6.1-sol` for both the orchestrator and reviewer.
 ## Orchestration topology
 
 The diagram shows the Astra (Pro) and Sol orchestrators. Plus uses a Luna
-root, as shown in the profile table below. Execution roles default to GPT-6 Luna;
+root, as shown in the profile table below. The diagram shows the native GPT-6 Luna execution route;
 the reviewer uses Astra for Pro/Plus and Sol for Sol profiles.
 
 ```text
@@ -123,40 +123,43 @@ a worker to implement it, and the tester and reviewer to verify it.
 The skill keeps the `astra-orchestrator` name in every profile so the shared
 `AGENTS.md` works; the Sol profiles use Sol according to their configuration.
 
-## Choose a worker model
+## Let the orchestrator choose the worker
 
-The orchestrator routes explorer, worker, tester, and researcher tasks to the selected model. It uses the profile's native Codex roles for GPT-6 Luna and runs Composer and Grok through the Cursor SDK in the local project workspace. Each profile defines the root and reviewer models.
+Give the orchestrator the task. It chooses the model and options for each execution role from the work's scope, reasoning difficulty, and latency needs.
 
-Install the `.agents` component with either setup script. For Composer and Grok, use Node.js 22.13 or later, set `CURSOR_API_KEY`, and install the bundled runner's dependencies from your project root:
-
-```sh
-npm ci --prefix .agents/skills/astra-orchestrator/scripts/cursor-worker
+```text
+$astra-orchestrator
+Find why the integration tests fail and fix the cause.
 ```
 
-Save this example to `.agents/skills/astra-orchestrator/worker-model.json`:
+To choose only the model, add a sentence such as `Use Grok 4.7 for this task.` The orchestrator still chooses Fast, Context, and Effort. You can also provide any option explicitly.
+
+For Composer and Grok, install the `.agents` component, use Node.js 22.13 or later, and authenticate the Cursor SDK via `CURSOR_API_KEY` or SDK browser login. Install the runner's dependencies from its directory:
+
+```sh
+cd .agents/skills/astra-orchestrator/scripts/cursor-worker
+npm ci
+```
+
+The orchestrator typically uses Composer 2.5 for bounded implementations and tests, or Grok 4.7 for larger investigations and complex reasoning. For Grok, it chooses 256k by default and 500k when the task needs the extra context. When automatically selected Cursor execution is unavailable, native GPT-6 Luna is the fallback. Each profile defines the root and reviewer models.
+
+For project-wide preferences, create `.agents/skills/astra-orchestrator/worker-model.json`:
 
 ```json
 {
-  "model": "grok-4.7",
-  "fast": true,
-  "context": "500k",
-  "effort": "high"
+  "model": "grok-4.7"
 }
 ```
 
-| Model | Configuration |
+The orchestrator fills in options omitted from this file. You can pin any of the supported fields, and explicit task instructions take precedence.
+
+| Model | Supported options |
 | --- | --- |
-| `gpt-6-luna` | Default when the configuration file is absent |
-| `composer-2.5` | Optional `fast` boolean |
-| `grok-4.7` | Optional `fast` boolean, `context` (`256k` or `500k`), and `effort` (`low`, `medium`, `high`, or `xhigh`) |
+| `gpt-6-luna` | Native Codex role from the selected profile |
+| `composer-2.5` | `fast` boolean |
+| `grok-4.7` | `fast` boolean, `context` (`256k` or `500k`), and `effort` (`low`, `medium`, `high`, or `xhigh`) |
 
-Omitted Cursor options use your Cursor defaults. Available variants depend on your account. [Cursor SDK model parameters](https://cursor.com/docs/sdk/typescript#model-parameters) · [Grok 4.7 options](https://cursor.com/docs/models/grok-4-7)
-
-You can override the selection for one task in your Codex prompt, for example `$astra-orchestrator: use Composer 2.5 with Fast off to investigate the failing tests`. To inspect the resolved route without making a model request, run:
-
-```sh
-node .agents/skills/astra-orchestrator/scripts/cursor-worker/run.mjs --resolve
-```
+Available variants depend on the Cursor account. [Cursor SDK model parameters](https://cursor.com/docs/sdk/typescript#model-parameters) · [Grok 4.7 options](https://cursor.com/docs/models/grok-4-7)
 
 For manual project installs, copy `scripts/cursor-worker/` into the installed skill's `scripts/` directory before running `npm ci`.
 
