@@ -1,4 +1,6 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
+import * as http from "node:http";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -46,15 +48,9 @@ async function loadSelection(workspace) {
   return config;
 }
 
-function resolveSelection({ model = "gpt-6-luna", fast, context, effort }) {
-  if (model === "gpt-6-luna") {
-    if ([fast, context, effort].some((value) => value !== undefined)) {
-      throw new Error("Fast, Context and Effort options require a Cursor model.");
-    }
-    return { backend: "codex", model };
-  }
+function resolveSelection({ model, fast, context, effort }) {
   if (!["composer-2.5", "grok-4.7"].includes(model)) {
-    throw new Error("Worker model must be gpt-6-luna, composer-2.5 or grok-4.7.");
+    throw new Error("Select composer-2.5 or grok-4.7.");
   }
   if (fast !== undefined && typeof fast !== "boolean") {
     throw new Error("Fast must be a boolean.");
@@ -77,6 +73,53 @@ function resolveSelection({ model = "gpt-6-luna", fast, context, effort }) {
   return { backend: "cursor", model: { id: model, params } };
 }
 
+async function authenticate({ AuthenticationError, Cursor, FileCredentialStore }) {
+  const isAuthenticationError = (error) =>
+    error instanceof AuthenticationError || error.status === 401;
+  const apiKey = process.env.CURSOR_API_KEY;
+  if (apiKey) {
+    try {
+      await Cursor.me({ apiKey });
+      return apiKey;
+    } catch (error) {
+      if (!isAuthenticationError(error)) throw error;
+    }
+  }
+
+  const store = new FileCredentialStore();
+  const status = await Cursor.auth.status({ store });
+  if (status.status === "logged-in") {
+    const saved = await store.load();
+    if (saved?.apiKey) {
+      try {
+        await Cursor.me({ apiKey: saved.apiKey });
+        return saved.apiKey;
+      } catch (error) {
+        if (!isAuthenticationError(error)) throw error;
+      }
+    }
+  }
+
+  console.error("Cursor login required. Complete SSO in the browser to continue.");
+  const login = await Cursor.auth.login({
+    openBrowser: true,
+    signal: AbortSignal.timeout(300_000),
+    store: {
+      load: () => store.load(),
+      clear: () => store.clear(),
+      async save(credentials) {
+        try {
+          await store.save(credentials);
+        } catch (error) {
+          if (!["EACCES", "EPERM", "EROFS"].includes(error.code)) throw error;
+          console.error("Cursor login succeeded. This session can use the key, but the sandbox prevented saving it.");
+        }
+      },
+    },
+  });
+  return login.apiKey;
+}
+
 async function main() {
   const workspace = await realpath(args.workspace ?? process.cwd());
   if (!(await stat(workspace)).isDirectory()) throw new Error("Workspace must be a directory.");
@@ -85,30 +128,39 @@ async function main() {
     console.log(JSON.stringify(route));
     return;
   }
-  if (route.backend === "codex") throw new Error("Use native Codex delegation for GPT-6 Luna.");
-
   const role = args.role;
-  if (!["explorer", "researcher", "worker", "tester"].includes(role) || !args["prompt-file"]) {
-    throw new Error("Provide --role explorer|researcher|worker|tester and --prompt-file PATH.");
+  if (!["explorer", "researcher", "worker", "tester", "reviewer"].includes(role) || !args["prompt-file"]) {
+    throw new Error("Provide --role explorer|researcher|worker|tester|reviewer and --prompt-file PATH.");
   }
   const prompt = await readFile(args["prompt-file"], "utf8");
   if (!prompt.trim()) throw new Error("The delegation prompt is empty.");
 
-  const { Agent } = await import("@cursor/sdk").catch((error) => {
+  http.setGlobalProxyFromEnv?.();
+  const sdk = await import("@cursor/sdk").catch((error) => {
     if (error.code !== "ERR_MODULE_NOT_FOUND") throw error;
     throw new Error("Cursor SDK is unavailable. Run npm ci in the cursor-worker directory.");
   });
 
-  const readOnly = role === "explorer" || role === "researcher";
+  const { Agent, JsonlLocalAgentStore } = sdk;
+  const apiKey = await authenticate(sdk);
+
+  const readOnly = ["explorer", "researcher", "reviewer"].includes(role);
   const tools = readOnly ? ["read", "grep", "glob", "ls"] : undefined;
   if (role === "researcher") tools.push("webSearch");
-  const agent = await Agent.create({
-    model: route.model,
-    tools,
-    disallowedTools: ["task", "mcp"],
-    local: { cwd: workspace, sandboxOptions: { enabled: true } },
-  });
+  const stateDirectory = await mkdtemp(join(tmpdir(), "cursor-worker-"));
+  let agent;
   try {
+    agent = await Agent.create({
+      apiKey,
+      model: route.model,
+      tools,
+      disallowedTools: ["task", "mcp"],
+      local: {
+        cwd: workspace,
+        sandboxOptions: { enabled: true },
+        store: new JsonlLocalAgentStore(stateDirectory),
+      },
+    });
     const run = await agent.send(`You are the ${role} delegated by the Codex orchestrator. Stay within the task scope and report results and verification to the orchestrator.\n\n${prompt}`);
     const result = await run.wait();
     if (result.status !== "finished") {
@@ -120,7 +172,11 @@ async function main() {
       result: result.result,
     }));
   } finally {
-    await agent[Symbol.asyncDispose]();
+    try {
+      await agent?.[Symbol.asyncDispose]();
+    } finally {
+      await rm(stateDirectory, { recursive: true, force: true });
+    }
   }
 }
 

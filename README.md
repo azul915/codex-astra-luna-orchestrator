@@ -141,6 +141,20 @@ cd .agents/skills/astra-orchestrator/scripts/cursor-worker
 npm ci
 ```
 
+### Cursor-only delegation
+
+The optional `profiles/cursor-only` setup keeps the current Codex model as orchestrator and limits workers, including reviewers, to Grok 4.7 or Composer 2.5.
+
+1. Merge [the feature settings](profiles/cursor-only/codex/config.toml) into the existing `[features]` and `[agents]` tables in `${CODEX_HOME:-$HOME/.codex}/config.toml`. Set `agents.enabled = false` and turn off both multi-agent feature flags. Check any project-level overrides as well.
+2. Install [the Cursor-only skill](profiles/cursor-only/agents/skills/astra-orchestrator/SKILL.md) as `~/.agents/skills/astra-orchestrator/SKILL.md`. Copy `scripts/cursor-worker/` under its `scripts/` directory and run `npm ci` in the installed runner directory.
+3. Open a fresh Codex chat. Check that the native `spawn_agent` tool is absent and resolve both supported model IDs through the installed runner. The runner rejects every other ID before importing the SDK. If Cursor cannot start a worker, the orchestrator handles the task directly.
+
+The runner validates credentials before sending a task. If the configured key and saved browser login are unavailable or rejected, it opens the Cursor sign-in page, waits up to five minutes for SSO, and uses the newly minted key for the pending task. The SDK stores the key in `~/.cursor/sdk/auth.json` if the sandbox permits it. A network error leaves the login flow untouched. The runner does not resubmit work after a worker has started.
+
+The runner stores SDK state in a temporary directory and removes it when it exits. The Codex shell still needs network access to reach Cursor. If the shell is network-restricted, run the worker with network permission where available.
+
+### Worker routing in the six installer profiles
+
 The orchestrator typically uses Composer 2.5 for bounded implementations and tests, or Grok 4.7 for larger investigations and complex reasoning. For Grok, it chooses 256k by default and 500k when the task needs the extra context. When automatically selected Cursor execution is unavailable, native GPT-6 Luna is the fallback. Each profile defines the root and reviewer models.
 
 For project-wide preferences, create `.agents/skills/astra-orchestrator/worker-model.json`:
