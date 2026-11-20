@@ -141,7 +141,12 @@ async function main() {
     throw new Error("Cursor SDK is unavailable. Run npm ci in the cursor-worker directory.");
   });
 
-  const { Agent, JsonlLocalAgentStore } = sdk;
+  const { Agent, Cursor, JsonlLocalAgentStore } = sdk;
+  const proxy = process.env.https_proxy || process.env.HTTPS_PROXY;
+  if (proxy) {
+    // The SDK's default HTTP/2 agent stream does not use Node's HTTPS proxy.
+    Cursor.configure({ local: { useHttp1ForAgent: true } });
+  }
   const apiKey = await authenticate(sdk);
 
   const readOnly = ["explorer", "researcher", "reviewer"].includes(role);
